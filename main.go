@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -31,8 +32,8 @@ func creatSendText(errCode int, message string) []byte {
 }
 
 func runCommand(w http.ResponseWriter, r *http.Request) {
-	log.Println(runtime.GOOS)
 	var rasData res
+	log.Println("[" + r.RemoteAddr + "] request url: " + r.RequestURI)
 
 	// 取出Post过来的数据
 	result, err := ioutil.ReadAll(r.Body)
@@ -40,14 +41,33 @@ func runCommand(w http.ResponseWriter, r *http.Request) {
 		w.Write(creatSendText(1, "解析数据出错!"))
 		return
 	}
-	log.Println("get message:", string(result))
+	log.Println("[" + r.RemoteAddr + "] send message: " + string(result))
 
 	// 格式化Json数据
 	if err := json.Unmarshal(result, &rasData); err != nil {
 		w.Write(creatSendText(1, "请求数据不是正确的Json格式!"))
 		return
 	}
+	if len(rasData.Command) == 0 {
+		log.Println("数据中不包含Command,尝试从url中解析命令!")
+		urlCommand := strings.Split(r.URL.RawQuery, "&")
+		for ind, base64Data := range urlCommand {
+			decoded, err := base64.StdEncoding.DecodeString(base64Data)
+			if err != nil {
+				w.Write(creatSendText(1, "参数["+string(base64Data)+"]不是正确的base64编码数据!"))
+				log.Println("decode error: ", base64Data)
+				return
+			}
+			urlCommand[ind] = string(decoded)
+		}
+		if len(urlCommand) == 0 {
+			log.Println("找不到Command，忽略请求!")
+			return
+		}
+		rasData.Command = urlCommand
+	}
 
+	log.Println("执行命令组:", rasData.Command)
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
@@ -74,7 +94,7 @@ func runCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	http.HandleFunc("/hooks", runCommand)
+	http.HandleFunc("/hook", runCommand)
 	log.Printf("server is running at 0.0.0.0:%s", "8888")
 	http.ListenAndServe(":8888", nil)
 }
